@@ -1,0 +1,72 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - next
+      - main
+      - prod
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v2
+        with:
+          path: source
+
+      - name: Build source
+        working-directory: source
+        run: .github/scripts/build-prod.sh
+
+      - name: start deployment
+        uses: bobheadxi/deployments@v0.4.3
+        id: start_deploy
+        with:
+          step: start
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: ${{ env.ENVIRONMENT_NAME }}
+
+      - name: laravel down
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: cd ${{ env.REMOTE_PATH }} ; ./bin/prod/down
+          use_insecure_cipher: true
+
+      - name: deploy to server
+        uses: easingthemes/ssh-deploy@v2.2.11
+        env:
+          ARGS: "-a -c -v -z -h --exclude-from='source/.rsyncignore' --delete-after"
+          REMOTE_HOST: ${{ secrets.SSH_HOST }}
+          REMOTE_PORT: ${{ secrets.SSH_PORT }}
+          REMOTE_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
+          TARGET: ${{ env.REMOTE_PATH }}
+          SOURCE: source/
+
+      - name: laravel up
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: cd ${{ env.REMOTE_PATH }} ; ./bin/prod/up
+          use_insecure_cipher: true
+
+      - name: update deployment status
+        uses: bobheadxi/deployments@v0.4.3
+        if: always()
+        with:
+          step: finish
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: ${{ job.status }}
+          deployment_id: ${{ steps.start_deploy.outputs.deployment_id }}
+          env_url: "${{ env.REMOTE_URL }}"
